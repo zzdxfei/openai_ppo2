@@ -83,11 +83,15 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
     else: assert callable(lr)
     if isinstance(cliprange, float): cliprange = constfn(cliprange)
     else: assert callable(cliprange)
+
+    # 进行采样的总次数
     total_timesteps = int(total_timesteps)
 
+    # 构造VF, pi
     policy = build_policy(env, network, **network_kwargs)
 
     # Get the nb of env
+    # 每个cpu一个环境
     nenvs = env.num_envs
 
     # Get state_space and action_space
@@ -95,7 +99,9 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
     ac_space = env.action_space
 
     # Calculate the batch_size
-    nbatch = nenvs * nsteps
+    # nsteps为每个cpu采样的个数
+    nbatch = nenvs * nsteps  # 8 x 128
+    # 训练时每个batch的大小  1024 / 4
     nbatch_train = nbatch // nminibatches
 
     # Instantiate the model object (that creates act_model and train_model)
@@ -122,6 +128,7 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
     tfirststart = time.perf_counter()
 
     nupdates = total_timesteps//nbatch
+    # 执行batch采样的总次数
     for update in range(1, nupdates+1):
         assert nbatch % nminibatches == 0
         # Start timer
@@ -146,12 +153,14 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
             # Index of each element of batch_size
             # Create the indices array
             inds = np.arange(nbatch)
+            # 对于一批采样的数据，训练的次数
             for _ in range(noptepochs):
                 # Randomize the indexes
                 np.random.shuffle(inds)
                 # 0 to batch_size with batch_train_size step
                 for start in range(0, nbatch, nbatch_train):
                     end = start + nbatch_train
+                    # 要训练的序号
                     mbinds = inds[start:end]
                     slices = (arr[mbinds] for arr in (obs, returns, masks, actions, values, neglogpacs))
                     mblossvals.append(model.train(lrnow, cliprangenow, *slices))
@@ -174,8 +183,11 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
         lossvals = np.mean(mblossvals, axis=0)
         # End timer
         tnow = time.perf_counter()
+
         # Calculate the fps (frame per second)
         fps = int(nbatch / (tnow - tstart))
+
+        # log info
         if update % log_interval == 0 or update == 1:
             # Calculates if value function is a good predicator of the returns (ev > 1)
             # or if it's just worse than predicting nothing (ev =< 0)
